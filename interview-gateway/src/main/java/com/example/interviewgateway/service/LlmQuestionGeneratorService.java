@@ -16,7 +16,7 @@ import java.util.List;
 @Service
 public class LlmQuestionGeneratorService {
 
-    @Value("${llm.api.key}")
+   // @Value("${llm.api.key}")
     private String apiKey;
 
     @Value("${llm.api.url}")
