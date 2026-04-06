@@ -99,15 +99,14 @@ print(f"\nSplit: {len(X_train)} train / {len(X_test)} test")
 print("\nTraining Random Forest Regressor...")
 
 model = RandomForestRegressor(
-    n_estimators=300,      # 300 trees — good balance of accuracy vs speed
-    max_depth=10,          # prevents overfitting on small dataset
-    min_samples_split=4,   # node must have 4+ samples to split
-    min_samples_leaf=2,    # each leaf must have 2+ samples
-    max_features="sqrt",   # standard for regression forests
+    n_estimators=300,
+    max_depth=6,          # was 10 — shallower trees generalize better
+    min_samples_split=10, # was 4  — needs more samples to split
+    min_samples_leaf=5,   # was 2  — bigger leaves = less memorization
+    max_features="sqrt",
     random_state=42,
-    n_jobs=-1              # use all CPU cores
+    n_jobs=-1
 )
-
 model.fit(X_train, y_train)
 print("Training complete.")
 
