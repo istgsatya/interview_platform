@@ -1,0 +1,89 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build-frontend",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm run build",
+			"isBackground": false
+		},
+		{
+			"label": "lint-frontend",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm run lint",
+			"isBackground": false
+		},
+		{
+			"label": "lint-frontend",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm run lint",
+			"isBackground": false
+		},
+		{
+			"label": "build-frontend",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && CI=1 npm run build",
+			"isBackground": false
+		},
+		{
+			"label": "install-frontend-deps",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm install",
+			"isBackground": false
+		},
+		{
+			"label": "test-frontend",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm run test",
+			"isBackground": false
+		},
+		{
+			"label": "lint-frontend",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm run lint",
+			"isBackground": false
+		},
+		{
+			"label": "build-frontend",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && CI=1 npm run build",
+			"isBackground": false
+		},
+		{
+			"label": "build-frontend-ci",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && CI=1 npm run build",
+			"isBackground": false
+		},
+		{
+			"label": "lint-frontend",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm run lint",
+			"isBackground": false
+		},
+		{
+			"label": "test-frontend",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm run test",
+			"isBackground": false
+		},
+		{
+			"label": "dev-frontend-bg",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm run dev",
+			"isBackground": true
+		},
+		{
+			"label": "build-frontend-ci",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && CI=1 npm run build",
+			"isBackground": false
+		},
+		{
+			"label": "dev-frontend-bg",
+			"type": "shell",
+			"command": "cd /home/lynx/project/Interview_platform/interview-frontend && npm run dev",
+			"isBackground": true
+		}
+	]
+}
