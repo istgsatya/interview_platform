@@ -22,7 +22,7 @@ public class MlEvaluationService {
         this.restTemplate = new RestTemplate();
     }
 
-    public EvaluationResponse evaluateAnswer(String candidateAnswer, String idealAnswer) {
+    public EvaluationResponse evaluateAnswer(String candidateAnswer, String idealAnswer, String userContext) {
         System.out.println("--- Sending Answer to Python ML Engine ---");
 
         // 1. Setup the Headers
@@ -33,6 +33,7 @@ public class MlEvaluationService {
         Map<String, String> requestBody = new HashMap<>();
         requestBody.put("candidate_answer", candidateAnswer);
         requestBody.put("ideal_answer", idealAnswer);
+        requestBody.put("user_context", userContext); // ✅ THE BRIDGE IS WIDENED
 
         HttpEntity<Map<String, String>> requestEntity = new HttpEntity<>(requestBody, headers);
 

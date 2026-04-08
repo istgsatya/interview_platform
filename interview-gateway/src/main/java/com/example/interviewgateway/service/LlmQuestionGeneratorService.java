@@ -5,9 +5,13 @@ import com.example.interviewgateway.model.InterviewSession;
 import com.example.interviewgateway.repository.QuestionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
@@ -16,7 +20,9 @@ import java.util.List;
 @Service
 public class LlmQuestionGeneratorService {
 
-   // @Value("${llm.api.key}")
+    private static final Logger log = LoggerFactory.getLogger(LlmQuestionGeneratorService.class);
+
+    @Value("${llm.api.key:}")
     private String apiKey;
 
     @Value("${llm.api.url}")
@@ -36,7 +42,12 @@ public class LlmQuestionGeneratorService {
     }
 
     public List<Question> generateAndSaveQuestions(InterviewSession session, String resumeText, String jdText) {
-        System.out.println("Initiating real Grok API call for Session: " + session.getId());
+        log.info("Initiating Groq API call for session {}", session.getId());
+
+        if (!StringUtils.hasText(apiKey)) {
+            log.error("Missing llm.api.key. Configure GROQ_API_KEY/llm.api.key before starting interviews.");
+            return generateFallbackQuestions(session, resumeText, jdText);
+        }
 
         // 1. Setup the Headers
         HttpHeaders headers = new HttpHeaders();
@@ -71,16 +82,26 @@ public class LlmQuestionGeneratorService {
         HttpEntity<java.util.Map<String, Object>> requestEntity = new HttpEntity<>(requestBodyMap, headers);
 
         try {
-            // 4. Fire the request to Grok
+            // 4. Fire the request to Groq
             ResponseEntity<String> response = restTemplate.postForEntity(apiUrl, requestEntity, String.class);
+
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                log.error("Groq API returned non-success status {} for session {}", response.getStatusCode(), session.getId());
+                return generateFallbackQuestions(session, resumeText, jdText);
+            }
 
             // 5. Parse the response and save it
             return parseAndSaveQuestions(session, response.getBody());
 
+        } catch (HttpClientErrorException.Unauthorized e) {
+            log.error("Groq API unauthorized (401). Verify GROQ_API_KEY validity and project permissions. Response: {}", e.getResponseBodyAsString());
+            return generateFallbackQuestions(session, resumeText, jdText);
+        } catch (HttpClientErrorException e) {
+            log.error("Groq API request failed with status {} and body {}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+            return generateFallbackQuestions(session, resumeText, jdText);
         } catch (Exception e) {
-            System.err.println("CRITICAL ERROR: Failed to communicate with Grok API.");
-            e.printStackTrace();
-            return new ArrayList<>();
+            log.error("Failed to communicate with Groq API.", e);
+            return generateFallbackQuestions(session, resumeText, jdText);
         }
     }
 
@@ -108,7 +129,41 @@ public class LlmQuestionGeneratorService {
             savedQuestions.add(questionRepository.save(q));
         }
 
-        System.out.println("Successfully generated and saved " + savedQuestions.size() + " dynamic questions from Grok.");
+    log.info("Successfully generated and saved {} dynamic questions from Groq.", savedQuestions.size());
         return savedQuestions;
+    }
+
+    private List<Question> generateFallbackQuestions(InterviewSession session, String resumeText, String jdText) {
+    log.warn("Falling back to deterministic interview questions for session {}", session.getId());
+
+    List<Question> fallbackQuestions = List.of(
+        buildFallbackQuestion(session, 1,
+            "Walk through one backend feature you built end-to-end and explain your API design decisions.",
+            "A strong answer explains requirements, endpoint design, validation, persistence, error handling, and trade-offs."),
+        buildFallbackQuestion(session, 2,
+            "How would you optimize a slow database query in a production Spring application?",
+            "A strong answer discusses query plans, indexing strategy, pagination, avoiding N+1 issues, and measuring impact."),
+        buildFallbackQuestion(session, 3,
+            "Design a robust authentication flow for a web app using JWT. What are common pitfalls?",
+            "A strong answer covers token issuance, expiration, refresh flow, secure storage, revocation, and CSRF/XSS concerns."),
+        buildFallbackQuestion(session, 4,
+            "Given this JD context, which skill gap would you prioritize first and how would you close it in 30 days?",
+            "A strong answer prioritizes one high-impact gap, outlines a realistic learning plan, and ties progress to measurable outcomes."),
+        buildFallbackQuestion(session, 5,
+            "How would you design and operate this system reliably under high concurrent interview traffic?",
+            "A strong answer addresses scaling, caching, async processing, observability, fault tolerance, and incident response.")
+    );
+
+    return questionRepository.saveAll(fallbackQuestions);
+    }
+
+    private Question buildFallbackQuestion(InterviewSession session, int difficulty, String questionText, String idealAnswer) {
+    Question q = new Question();
+    q.setSession(session);
+    q.setDifficultyLevel(difficulty);
+    q.setQuestionText(questionText);
+    q.setIdealAnswer(idealAnswer);
+    q.setAsked(false);
+    return q;
     }
 }
