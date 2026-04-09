@@ -11,6 +11,7 @@ import os
 import json
 import urllib.request
 import urllib.error
+import traceback
 from sentence_transformers import SentenceTransformer, util
 
 app = FastAPI(title="Interview ML Engine", version="2.0")
@@ -99,22 +100,58 @@ def extract_json_object(text: str) -> dict:
 
 def parse_llm_score_feedback(content: str) -> tuple[float, str]:
     cleaned = content.strip().replace("```json", "").replace("```", "").strip()
+    parse_mode = "default"
+
+    def parse_numeric_score(value) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return clamp(float(value), 0.0, 10.0)
+
+        text = str(value).strip()
+        m = re.search(r'([0-9]+(?:\.[0-9]+)?)', text)
+        if not m:
+            return None
+        return clamp(float(m.group(1)), 0.0, 10.0)
 
     # 1) Preferred path: valid JSON object
     try:
         obj = extract_json_object(cleaned)
-        score = clamp(float(obj.get("score", 5.0)), 0.0, 10.0)
+        score = parse_numeric_score(obj.get("score"))
+        if score is None:
+            for alt_key in ("rating", "overall_score", "final_score", "score_out_of_10"):
+                score = parse_numeric_score(obj.get(alt_key))
+                if score is not None:
+                    break
+        if score is None:
+            raise ValueError("LLM JSON response did not include a parseable score field.")
+        parse_mode = "json"
+
         feedback = str(obj.get("feedback", "")).strip()
         if feedback:
+            print(f"  LLM parse mode={parse_mode} | parsed_score={score:.2f}")
             return score, feedback
     except Exception:
         pass
 
     # 2) Recovery path: regex extraction from partially malformed JSON/text
-    score_match = re.search(r'"?score"?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)', cleaned, flags=re.IGNORECASE)
-    score = clamp(float(score_match.group(1)), 0.0, 10.0) if score_match else 5.0
+    score_match = re.search(
+        r"[\"']?(score|rating|overall[_\s]?score|final[_\s]?score)[\"']?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if score_match:
+        score = clamp(float(score_match.group(2)), 0.0, 10.0)
+        parse_mode = "regex-key"
+    else:
+        out_of_ten = re.search(r'([0-9]+(?:\.[0-9]+)?)\s*/\s*10', cleaned, flags=re.IGNORECASE)
+        if out_of_ten:
+            score = clamp(float(out_of_ten.group(1)), 0.0, 10.0)
+            parse_mode = "regex-out-of-10"
+        else:
+            raise ValueError(f"Unable to parse LLM score from response content: {cleaned[:500]}")
 
-    feedback_match = re.search(r'"?feedback"?\s*[:=]\s*"([^"]+)"', cleaned, flags=re.IGNORECASE)
+    feedback_match = re.search(r'["\']?feedback["\']?\s*[:=]\s*["\']([^"\']+)', cleaned, flags=re.IGNORECASE)
     if feedback_match:
         feedback = feedback_match.group(1).strip()
     else:
@@ -126,30 +163,71 @@ def parse_llm_score_feedback(content: str) -> tuple[float, str]:
     if not feedback:
         feedback = "Increase technical specificity and align your response more closely to core requirements."
 
+    print(f"  LLM parse mode={parse_mode} | parsed_score={score:.2f}")
     return score, feedback
 
 
+def normalize_llm_content(raw_content) -> str:
+    if raw_content is None:
+        return ""
+
+    if isinstance(raw_content, str):
+        return raw_content
+
+    if isinstance(raw_content, list):
+        chunks: list[str] = []
+        for item in raw_content:
+            if isinstance(item, str):
+                chunks.append(item)
+                continue
+
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content") or item.get("output_text")
+                if text is not None:
+                    chunks.append(str(text))
+                    continue
+
+            chunks.append(str(item))
+
+        return "\n".join([c for c in chunks if c])
+
+    if isinstance(raw_content, dict):
+        text = raw_content.get("text") or raw_content.get("content") or raw_content.get("output_text")
+        if text is not None:
+            return str(text)
+        return json.dumps(raw_content, ensure_ascii=False)
+
+    return str(raw_content)
+
+
 def fetch_llm_analysis(user_context: str, ideal_answer: str, candidate_answer: str) -> tuple[float, str]:
-    api_key = "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"
+    api_key = "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"
     if not api_key:
         raise RuntimeError("Missing GROQ_API_KEY")
 
+    # Keep context concise to avoid token exhaustion and empty final content.
+    trimmed_user_context = re.sub(r"\s+", " ", user_context).strip()
+    if len(trimmed_user_context) > 1200:
+        trimmed_user_context = trimmed_user_context[:1200] + " ...[truncated]"
+
     prompt_system = (
-        "You evaluate technical interview answers. Return ONLY strict JSON with keys: "
-        "score (number 0.0 to 10.0) and feedback (1-2 sentences, actionable, concise)."
+        "You evaluate technical interview answers. "
+        "Return EXACTLY one valid JSON object and nothing else. "
+        "JSON keys required: score (0.0-10.0 number), feedback (1-2 actionable sentences)."
     )
     prompt_user = (
-        f"Candidate Resume Context:\n{user_context}\n\n"
+        f"Candidate Resume Context:\n{trimmed_user_context}\n\n"
         f"Reference Ideal Answer:\n{ideal_answer}\n\n"
         f"Candidate Answer:\n{candidate_answer}\n\n"
+        "Rules: emit JSON immediately, no markdown/code fences, no extra keys.\n"
         "Output format exactly:\n"
         "{\"score\": 7.8, \"feedback\": \"...\"}"
     )
 
     body = {
         "model": "openai/gpt-oss-120b",
-        "temperature": 0.1,
-        "max_tokens": 180,
+        "temperature": 0.0,
+        "max_tokens": 800,
         "messages": [
             {"role": "system", "content": prompt_system},
             {"role": "user", "content": prompt_user},
@@ -178,7 +256,40 @@ def fetch_llm_analysis(user_context: str, ideal_answer: str, candidate_answer: s
             response_body = "<unable to decode response body>"
         raise RuntimeError(f"Groq HTTP {e.code}: {response_body}") from e
 
-    content = response_payload["choices"][0]["message"]["content"]
+    choices = response_payload.get("choices") or []
+    if not choices:
+        raise RuntimeError(f"Groq response missing choices: {json.dumps(response_payload)[:1000]}")
+
+    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = first_choice.get("message") if isinstance(first_choice, dict) else None
+    if not isinstance(message, dict):
+        message = {}
+
+    raw_content = message.get("content")
+    content = normalize_llm_content(raw_content)
+
+    # Diagnostic prints for live mismatch debugging with Java caller.
+    print("LLM raw choice keys:", list(first_choice.keys()) if isinstance(first_choice, dict) else type(first_choice))
+    print("LLM raw content type:", type(raw_content).__name__)
+    print("LLM raw content preview:", repr(content[:500]))
+    print("LLM finish_reason:", first_choice.get("finish_reason") if isinstance(first_choice, dict) else None)
+
+    if not content.strip():
+        fallback_text = (
+            message.get("reasoning")
+            or first_choice.get("text")
+            or response_payload.get("output_text")
+        )
+        content = normalize_llm_content(fallback_text)
+        print("LLM fallback content preview:", repr(content[:500]))
+
+    if not content.strip():
+        raise RuntimeError(
+            "Groq returned empty content. "
+            f"finish_reason={first_choice.get('finish_reason') if isinstance(first_choice, dict) else None}, "
+            f"response_preview={json.dumps(response_payload)[:1000]}"
+        )
+
     llm_score, llm_feedback = parse_llm_score_feedback(content)
 
     if not llm_feedback:
@@ -239,6 +350,7 @@ def health_check():
 
 @app.post("/evaluate", response_model=EvaluationResult)
 def evaluate_answer(payload: AnswerPayload):
+    print("INCOMING FROM JAVA:", payload.model_dump())
     print(f"\n── Evaluation Request ────────────────────────────")
     print(f"  Ideal     : {payload.ideal_answer[:60]}...")
     print(f"  Candidate : {payload.candidate_answer[:60]}...")
@@ -285,10 +397,8 @@ def evaluate_answer(payload: AnswerPayload):
         flags = [f"Analysis: {llm_feedback}"]
     except Exception as e:
         print(f"\n❌ GROQ API FAILED: {str(e)}\n")
-        final_score = rf_score
-        flags = generate_flags(
-            final_score, similarity, length_ratio, kw_coverage, candidate, ideal
-        )
+        traceback.print_exc()
+        raise
 
     print(f"  similarity={similarity:.3f} | length={length_ratio:.2f} "
           f"| keywords={kw_coverage:.2f} | complexity={complexity:.2f}")
